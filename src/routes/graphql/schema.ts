@@ -8,8 +8,9 @@ import {
   GraphQLBoolean,
   GraphQLInt,
   GraphQLFloat,
-  GraphQLInputObjectType,
+  GraphQLInputObjectType
 } from 'graphql';
+import { ContextType } from './context.js';
 import { UUIDType } from './types/uuid.js';
 
 const ChangePostInput = new GraphQLInputObjectType({
@@ -114,13 +115,16 @@ const User = new GraphQLObjectType({
 });
 
 
-const RootQueryType = new GraphQLObjectType({
+const RootQuery = new GraphQLObjectType({
     name: 'RootQuery',
     description: 'Root query',
     fields: () => ({
         memberTypes: {
             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(MemberType))),
-            resolve: () => 'WIP',
+            resolve: async (_parent, args, context: ContextType) => {
+                const { prisma } = context;
+                return await prisma.memberType.findMany();
+            },
         },
 
         memberType: {
@@ -128,12 +132,29 @@ const RootQueryType = new GraphQLObjectType({
             args: {
                 id: { type: new GraphQLNonNull(MemberTypeId) },
             },
-            resolve: () => 'WIP',
+            resolve: async (_parent, { id }: { id: string }, context: ContextType) => {
+                const { prisma } = context; 
+
+                const memberType = await prisma.memberType.findUnique({
+                    where: { id },
+                });
+
+                if (memberType === null){
+                    throw new Error(`Member type with ID ${id} not found`);
+                }
+
+                return memberType;
+            },
+              
         },
 
         users: {
             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(User))),
-            resolve: () => 'WIP',
+            resolve: async (_parent, args, context: ContextType) => {
+                const { prisma } = context; 
+
+                return await prisma.user.findMany();
+            },
         },
 
         user: {
@@ -141,12 +162,31 @@ const RootQueryType = new GraphQLObjectType({
             args: {
                 id: { type: new GraphQLNonNull(UUIDType) },
             },
-            resolve: () => 'WIP',
+            resolve: async (_parent, { id }: { id: string }, context: ContextType) => {
+                const { prisma } = context; 
+
+                const user = await prisma.user.findUnique({
+                    where: { id },
+                    include: {
+                        userSubscribedTo: true,
+                        subscribedToUser: true
+                    }
+                });
+
+                if (user === null) {
+                    throw new Error(`Member type with ID ${id} not found`);
+                }
+
+                return user;
+            }
         },
 
         posts: {
             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(Post))),
-            resolve: () => 'WIP',
+            resolve: async (_parent, args, context: ContextType) => {
+                const { prisma } = context; 
+                return await prisma.post.findMany();
+            },
         },
 
         post: {
@@ -154,12 +194,27 @@ const RootQueryType = new GraphQLObjectType({
             args: {
                 id: { type: new GraphQLNonNull(UUIDType) },
             },
-            resolve: () => 'WIP',
+            resolve: async (_parent, { id }: { id: string }, context: ContextType) => {
+                const { prisma } = context;
+
+                const post = await prisma.post.findUnique({
+                    where: { id },
+                });
+
+                if (post === null) {
+                    throw new Error(`Member type with ID ${id} not found`);
+                }
+
+                return post;
+            }
         },
 
         profiles: {
             type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(Profile))),
-            resolve: () => 'WIP',
+            resolve: async (_parent, args, context: ContextType) => {
+                const { prisma } = context;
+                return await prisma.profile.findMany();
+            },
         },
 
         profile: {
@@ -167,7 +222,18 @@ const RootQueryType = new GraphQLObjectType({
             args: {
                 id: { type: new GraphQLNonNull(UUIDType) },
             },
-            resolve: () => 'WIP',
+            resolve: async (_parent, { id }: { id: string }, context: ContextType) => {
+                const { prisma } = context;
+                const profile = await prisma.profile.findUnique({
+                    where: { id },
+                });
+
+                if (profile === null) {
+                    throw new Error(`Member type with ID ${id} not found`);
+                }
+
+                return profile;
+            }
         },
   }),
 });
@@ -271,6 +337,6 @@ const Mutations = new GraphQLObjectType({
 });
 
 export const schema = new GraphQLSchema({
-  query: RootQueryType,
+  query: RootQuery,
   mutation: Mutations,
 });
