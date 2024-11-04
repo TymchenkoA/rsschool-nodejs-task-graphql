@@ -9,6 +9,7 @@ import {
   GraphQLInt,
   GraphQLFloat,
   GraphQLInputObjectType,
+  GraphQLInterfaceType,
 } from 'graphql';
 import { ContextType } from './context.js';
 import { UUIDType } from './types/uuid.js';
@@ -91,27 +92,115 @@ const Post = new GraphQLObjectType({
   }),
 });
 
+interface ProfileType {
+  id: string;
+  isMale: boolean;
+  yearOfBirth: number;
+  memberTypeId: 'BASIC' | 'BUSINESS';
+}
+
 const Profile = new GraphQLObjectType({
   name: 'Profile',
   fields: () => ({
     id: { type: new GraphQLNonNull(UUIDType) },
     isMale: { type: new GraphQLNonNull(GraphQLBoolean) },
     yearOfBirth: { type: new GraphQLNonNull(GraphQLInt) },
-    memberTypeId: { type: MemberTypeId },
+    memberType: {
+      type: new GraphQLNonNull(MemberType),
+      resolve: async (parent: ProfileType, args, context: ContextType) => {
+        const { prisma } = context;
+        return await prisma.memberType.findUnique({ where: { id: parent.memberTypeId } });
+      },
+    },
   }),
 });
 
-const User = new GraphQLObjectType({
-  name: 'User',
+const UserInterface: GraphQLInterfaceType = new GraphQLInterfaceType({
+  name: 'UserInterface',
   fields: () => ({
     id: { type: new GraphQLNonNull(UUIDType) },
     name: { type: new GraphQLNonNull(GraphQLString) },
     balance: { type: new GraphQLNonNull(GraphQLFloat) },
-    profile: { type: Profile },
-    posts: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(Post))) },
-    // userSubscribedTo: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(User))) },
-    // subscribedToUser: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(User))) },
+    userSubscribedTo: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserInterface))),
+    },
+    subscribedToUser: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserInterface))),
+    },
   }),
+});
+
+interface UserType {
+  id: string;
+  name: string;
+  balance: number;
+}
+
+const User = new GraphQLObjectType({
+  name: 'User',
+  interfaces: [UserInterface],
+  fields: () => ({
+    id: { type: new GraphQLNonNull(UUIDType) },
+    name: { type: new GraphQLNonNull(GraphQLString) },
+    balance: { type: new GraphQLNonNull(GraphQLFloat) },
+    profile: {
+      type: Profile,
+      resolve: async (parent: UserType, args, context: ContextType) => {
+        const { prisma } = context;
+        return await prisma.profile.findUnique({ where: { userId: parent.id } });
+      },
+    },
+    posts: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(Post))),
+      resolve: async (parent: UserType, args, context: ContextType) => {
+        const { prisma } = context;
+        return await prisma.post.findMany({ where: { authorId: parent.id } });
+      },
+    },
+    userSubscribedTo: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserInterface))),
+      resolve: async (parent: UserType, args, context: ContextType) => {
+        const { prisma } = context;
+        const subscribedTo = await prisma.user.findMany({
+          where: {
+            subscribedToUser: {
+              some: {
+                subscriberId: parent.id,
+              },
+            },
+          },
+          include: {
+            subscribedToUser: true,
+          },
+        });
+
+        return subscribedTo;
+      },
+    },
+    subscribedToUser: {
+      type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(UserInterface))),
+      resolve: async (parent: UserType, args, context: ContextType) => {
+        const { prisma } = context;
+        const subscribedToUser = await prisma.user.findMany({
+          where: {
+            userSubscribedTo: {
+              some: {
+                authorId: parent.id,
+              },
+            },
+          },
+          include: {
+            userSubscribedTo: true,
+          },
+        });
+
+        return subscribedToUser;
+      },
+    },
+  }),
+  isTypeOf: (obj) => {
+    return obj && typeof obj.id === 'string';
+  },
 });
 
 const RootQuery = new GraphQLObjectType({
@@ -139,7 +228,7 @@ const RootQuery = new GraphQLObjectType({
         });
 
         if (memberType === null) {
-          throw new Error(`Member type with ID ${id} not found`);
+          return null;
         }
 
         return memberType;
@@ -166,13 +255,17 @@ const RootQuery = new GraphQLObjectType({
         const user = await prisma.user.findUnique({
           where: { id },
           include: {
-            userSubscribedTo: true,
-            subscribedToUser: true,
+            profile: {
+              include: {
+                memberType: true,
+              },
+            },
+            posts: true,
           },
         });
 
-        if (user === null) {
-          throw new Error(`Member type with ID ${id} not found`);
+        if (!user) {
+          return null;
         }
 
         return user;
@@ -199,8 +292,8 @@ const RootQuery = new GraphQLObjectType({
           where: { id },
         });
 
-        if (post === null) {
-          throw new Error(`Member type with ID ${id} not found`);
+        if (!post) {
+          return null;
         }
 
         return post;
@@ -227,7 +320,7 @@ const RootQuery = new GraphQLObjectType({
         });
 
         if (profile === null) {
-          throw new Error(`Member type with ID ${id} not found`);
+          return null;
         }
 
         return profile;
@@ -437,7 +530,7 @@ const Mutations = new GraphQLObjectType({
           const author = await prisma.user.findUnique({ where: { id: args.authorId } });
 
           if (!user || !author) {
-            throw new Error('User or Author not found');
+            return null;
           }
 
           const existingSubscription = await prisma.subscribersOnAuthors.findUnique({
@@ -450,7 +543,7 @@ const Mutations = new GraphQLObjectType({
           });
 
           if (existingSubscription) {
-            throw new Error('User is already subscribed to this author.');
+            return null;
           }
 
           await prisma.subscribersOnAuthors.create({
